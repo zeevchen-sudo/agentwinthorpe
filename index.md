@@ -1,75 +1,223 @@
 ---
 layout: default
 ---
-# How Winthorpe Works
+# Winthorpe Architecture Reference
 
-Winthorpe is a runtime for letting AI execute financial processes autonomously while keeping each individual action constrained and verifiable.
+This document describes the execution model and architecture of Winthorpe. It is intended as a reference for analyzing how Winthorpe works, not as a product or market overview.
 
-The core idea is to separate **reasoning about what to do** from **the mechanics of doing it correctly**.
+## Core Model
 
-Rather than giving an AI agent broad access to financial systems and asking it to follow a long set of instructions, Winthorpe provides a library of pre-built execution blocks. Each block represents a narrow financial capability—such as retrieving an invoice, validating a vendor, initiating an ACH payment, checking transaction status, issuing a refund, or reversing a transaction.
+Winthorpe allows an AI system to execute financial processes by composing **pre-built, pre-tested execution blocks**.
 
-A process is assembled from these blocks. The AI can reason about which blocks it needs and how to move through them, but each block defines exactly what can happen when it is invoked.
+There are three distinct layers:
 
-The result is a system where the AI retains flexibility at the process level while execution remains tightly bounded at the action level.
+1. **Blocks** — fixed executable capabilities.
+2. **Flows** — sequences of blocks used to accomplish a process.
+3. **AI reasoning** — determines what should happen and, where permitted, how available blocks should be composed.
 
-## 1. Pre-built execution blocks
+The most important architectural constraint is:
 
-The basic unit in Winthorpe is an **execution block**.
+> **AI can compose functionality. AI cannot create functionality.**
 
-A block represents a discrete financial operation and packages together everything required to execute that operation correctly.
+An AI may dynamically construct a new flow from existing Winthorpe blocks. It may not create a new executable block, write arbitrary execution logic, grant itself new permissions, or directly access an underlying financial API.
 
-Conceptually, a block contains:
+## Definitions
 
-- **An action** — what the block is capable of doing.
-- **A schema** — the structured inputs required to perform it.
-- **Execution logic** — how the action should be carried out, including handling expected failures, retries, idempotency, and other operational behavior.
-- **Permissions** — the systems, APIs, accounts, and operations that the block is allowed to access.
-- **Validation rules** — conditions that must be satisfied before execution.
-- **Outputs** — structured results that can be verified and passed to subsequent blocks.
-- **Logging** — a deterministic record of what was requested, what was executed, and what happened.
+### Execution Block
 
-For example, a `Pay Vendor` block might require a vendor ID, invoice ID, amount, currency, and payment rail. Its execution environment might allow it to retrieve the relevant payment method and initiate an ACH transfer, but nothing else.
+An execution block is a pre-built and pre-tested unit of executable functionality.
 
-A `Refund Transaction` block would expose a different schema and receive a different set of permissions.
+Examples:
 
-These blocks are deliberately narrow. A block does not receive general access to the company's financial infrastructure simply because it is part of a financial workflow.
+- Retrieve invoice
+- Validate vendor
+- Retrieve transaction
+- Initiate ACH payment
+- Check payment status
+- Issue refund
+- Reverse transaction
+- Update ledger
+- Request human approval
 
-This is the Lego-block model: **build reliable financial primitives once, then reuse and combine them across many processes.**
+Each block defines:
 
-## 2. Processes are assembled from blocks
+- accepted structured inputs;
+- available operations;
+- required permissions;
+- validation rules;
+- execution behavior;
+- failure and retry behavior;
+- structured outputs;
+- logging requirements.
 
-Most real financial processes require multiple actions.
+Blocks exist before an AI begins executing a process.
 
-Paying an invoice, for example, might involve:
+An AI cannot generate a new block during execution.
 
-**Retrieve invoice → identify vendor → validate payment details → initiate payment → confirm settlement → update records**
+### Flow
 
-A refund might require:
+A flow is an ordered composition of execution blocks.
 
-**Retrieve transaction → determine refundable amount → execute refund → confirm result → update customer record**
+Example:
 
-Winthorpe assembles these processes from the same library of reusable blocks.
+```text
+Retrieve Invoice
+      ↓
+Validate Vendor
+      ↓
+Request Approval
+      ↓
+Execute Payment
+      ↓
+Confirm Settlement
+```
 
-This is different from hard-coding every complete workflow as a separate deterministic graph.
+Flows can be created in two ways:
 
-The same `Retrieve Transaction` block might appear in refunds, reconciliation, disputes, customer support, and treasury operations. The same `Send Payment` block might participate in vendor payments, payouts, reimbursements, or internal treasury movements.
+**1. Forced flow**
 
-The blocks define **how individual operations can safely occur**. The process defines **how those operations are combined for a particular objective**.
+The company defines the allowed sequence in advance.
 
-This allows Winthorpe to support many financial processes without independently implementing every possible process from beginning to end.
+The AI cannot bypass, reorder, or insert unauthorized executable steps.
 
-## 3. The AI operates through structured requests
+**2. AI-assembled flow**
 
-The model does not directly manipulate the underlying financial APIs.
+The company provides an objective and instructions, including instructions delivered through MCP. The AI determines which available Winthorpe blocks are required and assembles them into a flow at runtime.
 
-Instead, it interacts with Winthorpe through structured requests corresponding to the available blocks.
+For example, an AI might receive the objective:
 
-For example, rather than the model effectively saying:
+```text
+Resolve this customer's duplicate payment.
+```
 
-> “Pay this invoice.”
+It may determine that the appropriate flow is:
 
-and receiving general payment-system access, it must produce something conceptually equivalent to:
+```text
+Retrieve Transactions
+      ↓
+Identify Duplicate
+      ↓
+Check Settlement Status
+      ↓
+Issue Refund
+      ↓
+Confirm Refund
+```
+
+The flow itself may never have existed before.
+
+Every executable component of the flow, however, existed beforehand.
+
+Therefore:
+
+```text
+Dynamic flow creation:       YES
+Dynamic block creation:      NO
+Arbitrary code execution:    NO
+Direct financial API access: NO
+Self-granted permissions:    NO
+```
+
+## Architectural Invariants
+
+The following properties are always true regardless of whether a flow is forced or dynamically assembled.
+
+### 1. Every executable action maps to an existing block
+
+The AI cannot execute an operation for which Winthorpe does not have an available block.
+
+If the AI determines that an unavailable capability is required, execution cannot proceed through improvisation. The missing capability must be implemented and made available separately.
+
+### 2. Blocks, not prompts, define executable capabilities
+
+Natural-language instructions can influence AI reasoning and block selection.
+
+They do not create new executable authority.
+
+For example, an instruction saying:
+
+```text
+If necessary, transfer funds from another account.
+```
+
+does not enable a transfer unless an appropriate transfer block exists and is available to that process.
+
+### 3. Permissions are scoped to the current execution step
+
+The AI does not receive persistent access to all financial systems required by the complete process.
+
+When a block executes, Winthorpe makes available the permissions required by that block.
+
+Those permissions do not imply access to unrelated blocks or future steps.
+
+### 4. Sequential steps are isolated
+
+Completion of one block produces verified runtime state.
+
+Subsequent blocks operate using that state.
+
+The AI cannot make a later capability available merely by claiming that an earlier step occurred.
+
+### 5. Runtime state is authoritative
+
+The model's context is not the system of record for execution.
+
+Winthorpe maintains the authoritative state of:
+
+- blocks requested;
+- blocks executed;
+- execution results;
+- current process position;
+- available permissions;
+- failures;
+- retries;
+- completed actions.
+
+## Execution Model
+
+A simplified execution cycle is:
+
+```text
+External instruction / objective
+              ↓
+             AI
+              ↓
+     Reason about objective
+              ↓
+       Select next block
+              ↓
+      Structured request
+              ↓
+          WINTHORPE
+              ↓
+    Validate requested block
+              ↓
+   Validate structured inputs
+              ↓
+ Check current process state
+              ↓
+ Make required permissions available
+              ↓
+        Execute block
+              ↓
+      Persist actual result
+              ↓
+      Return structured output
+              ↓
+             AI
+              ↓
+      Reason about next step
+```
+
+The cycle repeats until the process completes, fails, or requires escalation.
+
+## Structured Execution Boundary
+
+The AI does not directly invoke arbitrary financial APIs.
+
+It requests execution through known structured interfaces.
+
+For example:
 
 ```text
 Action: PAY_VENDOR
@@ -80,241 +228,281 @@ Currency: USD
 Rail: ACH
 ```
 
-Winthorpe can deterministically validate this request because the expected structure is known.
+Because the request conforms to a known schema, Winthorpe can deterministically evaluate whether it represents an available executable capability.
 
-The runtime can verify that:
+The runtime can verify:
 
-- `PAY_VENDOR` is a valid action;
-- the requested parameters exist;
-- those parameters are valid for that action;
-- the required fields are present;
-- the combination of parameters is permitted;
-- and the execution request corresponds to a real Winthorpe block.
+- whether `PAY_VENDOR` exists;
+- whether the required parameters are present;
+- whether the parameter types are valid;
+- whether the requested combination is permitted;
+- whether the block is currently available;
+- whether prerequisite state exists;
+- whether the required permissions can be provided.
 
-If the model produces an invalid request, it does not become an ambiguous instruction that downstream software attempts to interpret.
+A malformed or unavailable request does not partially execute.
 
-It simply does not execute.
+It fails validation and returns control to the AI.
 
-The model can then correct the request, choose another block, or escalate when it cannot proceed.
+The AI may then correct its request, select another available block, or escalate.
 
-Natural-language reasoning therefore remains probabilistic, while the boundary between reasoning and execution is machine-verifiable.
+## Sequential Isolation
 
-## 4. Permissions are attached to execution, not to the agent
-
-An important part of the architecture is that the AI agent does not need to hold all of the permissions required for the complete process.
-
-Permissions are provided at the level of the individual execution block.
-
-If a process contains five steps, Winthorpe does not expose the permissions required for all five steps when the process begins.
-
-Instead, the runtime provides only the permissions required for the block currently being executed.
-
-Conceptually:
-
-```text
-Step 1
-Reason → invoke Block A → receive A permissions → execute → revoke
-
-Step 2
-Reason → invoke Block B → receive B permissions → execute → revoke
-
-Step 3
-Reason → invoke Block C → receive C permissions → execute → revoke
-```
-
-This creates a much smaller execution surface.
-
-A model performing an invoice-validation step does not need access to the capability that moves money. A model executing a payment does not automatically receive the capabilities required to issue refunds or modify unrelated accounts.
-
-The capability exists in the Winthorpe runtime, but it is not available to the agent until the corresponding execution block is legitimately reached.
-
-## 5. Sequential step isolation
-
-This becomes particularly important in multi-step processes.
-
-Winthorpe treats sequential steps as **isolated execution environments**, rather than exposing an entire workflow to the model at once.
-
-Suppose a process contains:
+Consider the following forced process:
 
 ```text
 1. Retrieve invoice
 2. Validate invoice
-3. Pay vendor
-4. Confirm payment
-5. Update ledger
+3. Obtain approval
+4. Execute payment
+5. Confirm settlement
 ```
 
-Step 3 should not be executable merely because the overall process contains a payment somewhere in its future.
+The existence of Step 4 in the process does not mean the AI currently possesses the ability to execute Step 4.
 
-Winthorpe first executes and records Step 1. Its verified output becomes an input into Step 2. Only after Step 2 has completed successfully can the execution context required for Step 3 become available.
-
-In simplified form:
+Initially:
 
 ```text
-[ Step 1 ]
-Permissions: A
-      ↓
-Verified output
-      ↓
-[ Step 2 ]
-Permissions: B
-      ↓
-Verified output
-      ↓
-[ Step 3 ]
-Permissions: C
+AVAILABLE:
+Retrieve Invoice
+
+UNAVAILABLE:
+Validate Invoice
+Obtain Approval
+Execute Payment
+Confirm Settlement
 ```
 
-Each step therefore has its own bounded context, inputs, outputs, and permissions.
+After Step 1 completes successfully, its verified output changes the runtime state.
 
-The AI can reason across the broader objective, but **execution authority advances one step at a time**.
+Winthorpe can then make the next permitted capability available.
 
-If the model attempts to jump directly to a later action, the necessary capability is simply unavailable.
+Conceptually:
 
-This is different from telling the model, in natural language, “Do not pay the vendor until you have validated the invoice.” Winthorpe can make that sequencing an execution property rather than an instruction the model is expected to obey.
+```text
+[Retrieve Invoice]
+        ↓
+verified invoice
+        ↓
+[Validate Invoice]
+        ↓
+validated invoice
+        ↓
+[Obtain Approval]
+        ↓
+approval record
+        ↓
+[Execute Payment]
+        ↓
+transaction ID
+        ↓
+[Confirm Settlement]
+```
 
-## 6. Outputs become inputs to subsequent blocks
+This means sequencing is not merely expressed as an instruction such as:
 
-Isolation does not mean that steps are disconnected.
+```text
+Do not pay until approval has been obtained.
+```
 
-Each block produces a structured output that can be persisted and used by subsequent blocks.
+It can be enforced through capability availability.
+
+The payment capability does not become executable until the prerequisite state exists.
+
+## Dynamic Flow Assembly
+
+Sequential isolation also applies to flows created dynamically by the AI.
+
+Suppose the AI receives an objective through MCP:
+
+```text
+Resolve this failed vendor payment.
+```
+
+Based on the available blocks and the information it retrieves, it might construct:
+
+```text
+Retrieve Payment
+      ↓
+Check Failure Reason
+      ↓
+Retrieve Vendor Payment Method
+      ↓
+Retry Payment
+      ↓
+Confirm Status
+```
+
+Alternatively, the information encountered during execution might cause it to choose:
+
+```text
+Retrieve Payment
+      ↓
+Check Failure Reason
+      ↓
+Request Updated Vendor Details
+      ↓
+STOP / WAIT
+```
+
+The AI is therefore not necessarily choosing the complete flow before execution begins.
+
+It can reason after each verified result and determine the next appropriate block.
+
+This provides process-level flexibility while preserving action-level constraints.
+
+## Failure and Recovery
+
+Failure behavior can also be encoded within blocks.
+
+A financial operation may distinguish between:
+
+- a request that definitely failed;
+- a request whose outcome is unknown;
+- a pending transaction;
+- a retryable failure;
+- a permanent failure.
+
+These distinctions matter because repeating a financial operation after an ambiguous failure can create duplicate transactions.
+
+A block can therefore contain execution behavior for idempotency, status checking, retries, and expected failure modes.
+
+The AI reasons about the process-level response to the failure.
+
+The block governs the mechanics of executing the financial operation correctly.
+
+Recovery operations such as reversals are themselves explicit blocks. The AI does not obtain an unrestricted ability to undo arbitrary operations.
+
+## Reuse and Composition
+
+The same blocks can participate in many different processes.
 
 For example:
 
 ```text
-Retrieve Invoice
-        ↓
-invoice_123
+Retrieve Transaction
+```
 
-Validate Invoice
-        ↓
-validated_invoice_123
+could be used in:
 
-Authorize Payment
-        ↓
-payment_authorization_789
+- refunds;
+- reconciliation;
+- disputes;
+- customer support;
+- transaction investigation.
 
+Similarly:
+
+```text
 Execute Payment
-        ↓
-transaction_456
-
-Confirm Settlement
-        ↓
-settled_transaction_456
 ```
 
-The important distinction is that later steps operate on **verified state produced by earlier execution**, rather than solely on the model's representation of what happened.
+could participate in:
 
-The model cannot simply claim that a payment was authorized and proceed as though authorization occurred. The runtime has the actual output of the authorization block.
+- vendor payments;
+- reimbursements;
+- payouts;
+- treasury operations.
 
-This creates a chain of machine-verifiable state through the process.
+A new business process therefore does not necessarily require new executable functionality.
 
-## 7. Failure, retries, and recovery are part of the blocks
+If the necessary capabilities already exist, the process can be created by composing existing blocks.
 
-Financial processes rarely follow a perfect happy path.
-
-Payments fail. APIs time out. Transactions remain pending. Vendors have outdated details. A request may be valid but temporarily impossible to execute.
-
-Winthorpe therefore treats failure handling as part of the execution primitive rather than leaving all recovery behavior to ad hoc model reasoning.
-
-A block can define what constitutes a retryable failure, when an operation should be checked rather than repeated, what information is required before retrying, and which recovery operations are available.
-
-This is particularly important for money movement, where blindly repeating an operation can be much worse than failing to perform it.
-
-The model can still reason about the broader situation—for example, deciding whether an alternative payment method is appropriate—but the mechanics of safely retrying an ACH initiation do not need to be reinvented every time an agent encounters a timeout.
-
-The same principle applies to reversals and compensating actions. They are explicit execution capabilities with their own schemas and permissions, rather than arbitrary actions available to the model.
-
-## 8. The runtime maintains the authoritative state
-
-Throughout the process, Winthorpe—not the model's context window—maintains the authoritative execution state.
-
-The runtime knows:
+This produces two independent forms of extensibility:
 
 ```text
-What process is running
-        ↓
-Which blocks have completed
-        ↓
-What each block actually returned
-        ↓
-Which block is currently executable
-        ↓
-Which permissions that block receives
-        ↓
-What actions were attempted
-        ↓
-What ultimately happened
+NEW PROCESS
+Existing blocks → new composition
+
+NEW CAPABILITY
+Build + test new block → add to block library
 ```
 
-The model uses this state to reason about what to do next, but it does not define the state simply by asserting it.
+Only the second case expands what the system is fundamentally capable of executing.
 
-This distinction is important because models can misunderstand prior events, lose information from context, or produce an incorrect representation of what happened.
+## Role of MCP
 
-Winthorpe's execution state is based on actual execution results.
+MCP can provide instructions, context, and access to external capabilities involved in the reasoning process.
 
-## 9. Building new processes becomes composition
+MCP instructions may influence:
 
-Once a useful library of blocks exists, supporting a new financial process increasingly becomes an exercise in composition rather than building new execution infrastructure.
+- the objective the AI is trying to accomplish;
+- business-specific rules;
+- contextual information;
+- which Winthorpe blocks the AI chooses;
+- how the AI composes those blocks.
 
-If Winthorpe already knows how to:
+MCP instructions do not override Winthorpe's execution boundary.
+
+An instruction received through MCP cannot create a Winthorpe block or grant the AI an executable financial capability that does not already exist.
+
+Therefore:
 
 ```text
-Retrieve invoice
-Validate vendor
-Check balance
-Move money
-Check transaction
-Reverse transaction
-Update ledger
-Request approval
+MCP / company instructions
+          ↓
+    influence reasoning
+          ↓
+          AI
+          ↓
+  selects/composes from
+          ↓
+ AVAILABLE WINTHORPE BLOCKS
+          ↓
+  deterministic execution
 ```
 
-then many new processes can be constructed by combining those capabilities in different ways.
+## What Winthorpe Does Not Do
 
-Some processes may require a new block. Others may require only a new arrangement of existing blocks.
+To avoid ambiguity, Winthorpe's architecture should not be interpreted as allowing an AI to:
 
-This is where the Lego analogy becomes most useful.
+- write arbitrary financial execution code at runtime;
+- create new financial operations during a process;
+- directly call arbitrary financial APIs;
+- grant itself permissions;
+- bypass required blocks in a forced flow;
+- treat its own assertion that a previous step succeeded as proof of completion;
+- convert natural-language instructions into new executable authority.
 
-The blocks are not complete applications. They are reusable financial execution primitives with known interfaces and known behavior. Different processes assemble those primitives differently.
+The AI's autonomy exists primarily in **reasoning and composition**.
 
-Over time, Winthorpe's library can cover increasingly complex financial operations without the number of underlying execution capabilities growing at the same rate as the number of processes it supports.
+The execution primitives remain predefined.
 
-## 10. Where the AI fits
+## Summary
 
-Winthorpe does not attempt to turn financial operations into fully deterministic workflows.
-
-That would remove much of the reason to use AI in the first place.
-
-The model remains responsible for the parts where reasoning is valuable: understanding intent, interpreting context, dealing with ambiguity, choosing appropriate actions, responding to unexpected situations, and deciding how to proceed when several valid paths exist.
-
-Winthorpe handles the boundary where that reasoning turns into real-world execution.
-
-The division is roughly:
+Winthorpe separates three things that are often conflated in agentic systems:
 
 ```text
-AI
-Understand → Reason → Decide → Request action
-                              ↓
-                         WINTHORPE
-                   Validate structured request
-                              ↓
-                   Load execution block
-                              ↓
-                   Grant narrow permissions
-                              ↓
-                         Execute
-                              ↓
-                   Verify + persist result
-                              ↓
-                              AI
-                       Reason about next step
+WHAT CAN BE DONE
+Defined by pre-built Winthorpe blocks.
+
+HOW THOSE CAPABILITIES ARE COMBINED
+Defined either by a forced company flow
+or dynamically by AI reasoning.
+
+WHAT SHOULD HAPPEN NEXT
+Determined by the AI from instructions,
+context, and verified execution state.
 ```
 
-The AI is therefore not reduced to a component inside a rigid workflow, but neither is it given unrestricted access and trusted to execute a financial process correctly based solely on instructions.
+This allows different processes to use different levels of autonomy.
 
-It can reason freely.
+A company can require:
 
-Execution remains constrained by the blocks available to it, the structure of those blocks, the current state of the process, and the permissions Winthorpe makes available at that specific step.
+```text
+A → B → C → D
+```
 
-That separation—**flexible reasoning above a deterministic execution boundary**—is the basic mechanism behind Winthorpe.
+for a tightly controlled process.
+
+For another process, it can give the AI an objective and allow it to construct:
+
+```text
+A → F → C
+```
+
+at runtime.
+
+In both cases, `A`, `B`, `C`, `D`, and `F` are existing, pre-tested execution blocks.
+
+**The AI can create the flow. It cannot create the functionality.**
