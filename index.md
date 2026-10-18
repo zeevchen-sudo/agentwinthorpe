@@ -1,4 +1,6 @@
-<link rel="stylesheet" href="style.css">
+---
+layout: default
+---
 # How Winthorpe Works
 
 Winthorpe is a runtime for letting AI execute financial processes autonomously while keeping each individual action constrained and verifiable.
