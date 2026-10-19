@@ -35,8 +35,6 @@ ISOLATED EXECUTION
 
 The cycle continues until the financial process completes, fails, or requires escalation.
 
----
-
 # 1. Architecture Model
 
 Winthorpe has three distinct architectural layers:
@@ -113,8 +111,6 @@ FINANCIAL EXECUTION
 Predefined and deterministically constrained
 ```
 
----
-
 # 2. Deterministic Execution Boundary
 
 AI does not directly invoke arbitrary financial APIs through Winthorpe.
@@ -185,8 +181,6 @@ Winthorpe maintains authoritative runtime state including:
 - completed actions.
 
 The AI may reason about that state. It cannot replace it with its own assertion of what occurred.
-
----
 
 # 3. Sandboxed Sequential Isolation
 
@@ -278,8 +272,6 @@ The AI can reason flexibly about the process.
 
 The execution environment does not become flexible merely because the AI is.
 
----
-
 # 4. Autonomy Within Deterministic Boundaries
 
 Deterministic execution does not require every financial process to be hard-coded in advance.
@@ -352,8 +344,6 @@ The division of responsibility is therefore:
 
 > **AI determines what should happen next.  
 > The runtime determines what can actually execute.**
-
----
 
 # 5. Failure Semantics, Recovery, and Auditability
 
@@ -433,8 +423,6 @@ STATE VERIFIED
 Because execution is isolated and stateful, the audit trail is an artifact of the execution itself rather than a reconstruction of the AI's reasoning after the fact.
 
 This same property provides a deterministic point from which failures can be investigated, retried, escalated, or—where an explicit capability exists—reversed.
-
----
 
 # Architectural Principle
 
